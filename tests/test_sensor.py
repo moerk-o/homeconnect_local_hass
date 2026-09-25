@@ -674,3 +674,75 @@ async def test_progress_available_when_powered_on() -> None:
     entity = HCSensor(entity_description, runtime_data)
 
     assert entity.available is True
+
+
+def _elapsed_time_sensor(
+    *, active_program: object, value: int | None, connected: bool = True
+) -> HCSensor:
+    """Build an elapsed-time sensor whose Option the appliance reports as unavailable."""
+    appliance = MagicMock()
+    appliance.info = {"deviceID": "test_device_id"}
+    appliance.active_program = active_program
+    appliance.session.connected = connected
+    appliance.entities = {
+        "Test.ElapsedProgramTime": MagicMock(value=value, enum=None, available=False),
+        "BSH.Common.Setting.PowerState": MagicMock(value="On"),
+    }
+    runtime_data = HCData(
+        appliance=appliance,
+        device_info=MagicMock(),
+        available_entity_descriptions=MagicMock(),
+        coordinator=MagicMock(expected_offline=False),
+    )
+    entity_description = HCSensorEntityDescription(
+        key="sensor_elapsed_program_time",
+        entity="Test.ElapsedProgramTime",
+        available_while_program_active=True,
+    )
+    return HCSensor(entity_description, runtime_data)
+
+
+async def test_elapsed_time_available_while_program_active() -> None:
+    """
+    Shown while a program runs, even though the appliance flags it unavailable.
+
+    A Thermador PRG486WDH oven running top/bottom heating with no timer set
+    reports BSH.Common.Option.ElapsedProgramTime as available=false while its
+    value keeps counting up (2557s in the reporting diagnostics).
+    """
+    entity = _elapsed_time_sensor(active_program=MagicMock(), value=2557)
+
+    assert entity.available is True
+    assert entity.native_value == 2557
+
+
+async def test_elapsed_time_follows_appliance_flag_without_active_program() -> None:
+    """With nothing running, the appliance's own available=false still applies."""
+    entity = _elapsed_time_sensor(active_program=None, value=2557)
+
+    assert entity.available is False
+
+
+async def test_elapsed_time_unavailable_without_value() -> None:
+    """An active program alone isn't enough - there has to be a value to show."""
+    entity = _elapsed_time_sensor(active_program=MagicMock(), value=None)
+
+    assert entity.available is False
+
+
+async def test_elapsed_time_unavailable_when_disconnected() -> None:
+    """Ignoring the appliance's flag never overrides a lost connection."""
+    entity = _elapsed_time_sensor(active_program=MagicMock(), value=2557, connected=False)
+
+    assert entity.available is False
+
+
+async def test_elapsed_time_sensor_listens_to_active_program() -> None:
+    """It has to re-evaluate when a program starts or stops, not only on its own updates."""
+    entity = _elapsed_time_sensor(active_program=MagicMock(), value=2557)
+    active_program_entity = MagicMock()
+    entity._runtime_data.appliance.entities["BSH.Common.Root.ActiveProgram"] = active_program_entity
+
+    entity = HCSensor(entity.entity_description, entity._runtime_data)
+
+    assert active_program_entity in entity._entities
