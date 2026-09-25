@@ -51,6 +51,56 @@ Future BSH Appliances will come with Matter which involves both wifi and bluetoo
 
 For some reason a Home Connect Appliance can be registered to multiple accounts. Not sure how this would handle it.
 
+## Potential network commands
+
+>[!important]
+> Only confirmed on one appliance so far. Treat everything here as a lead, not as documented behavior.
+
+[@moerk-o](https://github.com/moerk-o) found that an already-paired appliance can be moved to a different WiFi network over its local WebSocket, with no hotspot, no network reset and no Home Connect app ([discussion #105](https://github.com/vemboy200/homeconnect_local_hass/discussions/105), [script](https://gist.github.com/moerk-o/5f3835fffee3ef1ad1e113676ef9bf73)). Tested on a Siemens HB876G8B6/75 oven, firmware 2.11.6.13174, AES connection (`ws://`, port 80), services `ro` 1, `ei` 2, `ci` 2, `ni` 1.
+
+All of these go over the existing, authenticated WebSocket, after the handshake:
+
+| Resource | Action | Result |
+| --- | --- | --- |
+| `/ni/config` | GET with payload `[{"interfaceID": 0}]` | Returns `interfaceID`, `ssid`, `automaticIPv4`, `automaticIPv6`. Never returns the password. A GET without a payload returns 400. |
+| `/ni/config` | POST | Changes the WiFi network (see below). |
+| `/ni/info` | GET | Shows the network the appliance is currently on. |
+| `/ci/wifiNetworks` | GET | Returns a WiFi scan (SSID and RSSI per network). |
+| `/ci/wifiSetting`, `/ci/wifiSetting2`, `/ci/networkDetails`, `/ci/networkDetails2` | GET | 404 on this appliance. The protocol notes describe them for `ci` version 1, and this oven speaks version 2. |
+
+The write that moves the appliance:
+
+```json
+// POST /ni/config
+[
+  {
+    "interfaceID": 0,
+    "ssid": "NewNetwork",
+    "passphrase": "…",
+    "automaticIPv4": true,
+    "automaticIPv6": true
+  }
+]
+```
+
+The password field is `passphrase` (`psk` is rejected with 400). The appliance answers 200, closes the WebSocket, leaves its current network and joins the new one. About 30 seconds later it was reachable on the new network with a new IP, and this integration found it again through mDNS and updated the host in the config entry by itself. Writing the current network back (same SSID and password) is a safe way to test whether an appliance accepts the write at all: it drops briefly and rejoins the same network.
+
+So unlike first-time setup, the appliance never goes into a pairing mode. It stays on its current network the whole time, receives the new network's details over the local connection, and then switches on its own.
+
+### What this means for this idea
+
+- **It doesn't replace the hotspot step.** The write needs an already-authenticated WebSocket, so it needs the appliance's encryption key. A factory-reset appliance on its "HomeConnect" hotspot hasn't been paired to an account yet. Either the app hands over the WiFi details some other way during that step, or the appliance already has a key at that point. If it's the second, that changes a lot here: the key would come from the appliance, not from the cloud handshake. Capturing what the app sends over the hotspot answers this.
+- **It's probably what the app uses for its own network settings.** The app's "Extended network settings" refuse to work unless the phone is on the same network as the appliance ("Network change unavailable"), which fits a local-only command like this. Not confirmed, since the app's traffic hasn't been captured.
+
+### Open questions
+
+- **What happens with a wrong password?** Unknown. The appliance might fall back to the last network that worked, or it might be left with no network until it's fixed on the appliance or in the app. Not tested yet.
+- **Do other appliances behave the same?** One appliance, one firmware, `ci` version 2 without an `iz` service. Appliances with `ci` 3 and `iz` (e.g. some dishwashers) may expose this differently or not at all. The script's read-only mode is the safe way to check, since it changes nothing on the appliance.
+
+### Not an integration feature
+
+Changing the WiFi network falls in the same category as the commands this integration deliberately leaves out (factory reset, network reset, WiFi deactivation): a mistake can leave the appliance unreachable. It's documented here as protocol knowledge for this project, not as something to expose in Home Assistant. It's also a reminder of why the Full profile export (which contains the encryption key) stays gated: anyone with that key can move the appliance off your network over the local connection.
+
 ## How the software would work
 
 During the pairing process the app would be both the cloud and phone in parallel.
