@@ -54,32 +54,41 @@ For some reason a Home Connect Appliance can be registered to multiple accounts.
 ## Potential network commands
 
 >[!important]
-> The WiFi change (the POST) is only confirmed on one appliance so far, and the reads on four. Treat everything here as a lead, not as documented behavior.
+> The WiFi change (the POST) is only confirmed on one appliance so far, and the reads on four. None of this was captured during an actual first-time setup. Treat everything here as a lead, not as documented behavior.
 
-[@moerk-o](https://github.com/moerk-o) found that an already-paired appliance can be moved to a different WiFi network over its local WebSocket, with no hotspot, no network reset and no Home Connect app ([discussion #105](https://github.com/vemboy200/homeconnect_local_hass/discussions/105), [script](https://gist.github.com/moerk-o/5f3835fffee3ef1ad1e113676ef9bf73)). Tested on a Siemens HB876G8B6/75 oven, firmware 2.11.6.13174, AES connection (`ws://`, port 80), services `ro` 1, `ei` 2, `ci` 2, `ni` 1.
+[@moerk-o](https://github.com/moerk-o) found that an already-paired appliance accepts WiFi credentials over its local WebSocket and moves to the new network by itself ([discussion #105](https://github.com/vemboy200/homeconnect_local_hass/discussions/105), [script](https://gist.github.com/moerk-o/5f3835fffee3ef1ad1e113676ef9bf73)). For this idea, that matters because the first step of the diagram below ("Phone shares home WiFi creds via appliance's own hotspot") has never been captured. This is the first known message that hands an appliance an SSID and password, so it's the most likely shape of that handoff.
+
+### Response codes
+
+The appliance answers every request with either data or a code. The ones seen so far:
+
+| Code | Meaning |
+| --- | --- |
+| 200 | Accepted. For a GET the data comes back with it, for a POST the appliance applies it. |
+| 400 | Bad request: the resource exists but the payload is wrong, e.g. a missing `interfaceID` or a wrong field name. Nothing changes on the appliance. |
+| 404 | The resource doesn't exist on this appliance (usually a different service version). |
+
+403 (not allowed), 405 (not writable) and 501 (not implemented) are also possible answers, but haven't come up in these tests.
+
+### What was tried
 
 All of these go over the existing, authenticated WebSocket, after the handshake:
 
 | Resource | Action | Result |
 | --- | --- | --- |
-| `/ni/config` | GET with payload `[{"interfaceID": 0}]` | Returns `interfaceID`, `ssid`, `automaticIPv4`, `automaticIPv6`. Never returns the password. A GET without a payload returns 400. |
-| `/ni/config` | POST | Changes the WiFi network (see below). |
-| `/ni/info` | GET | Shows the network the appliance is currently on. |
-| `/ci/wifiNetworks` | GET | Returns a WiFi scan (SSID and RSSI per network). |
-| `/ci/wifiSetting`, `/ci/wifiSetting2`, `/ci/networkDetails`, `/ci/networkDetails2` | GET | 404 on this appliance. The protocol notes describe them for `ci` version 1, and this oven speaks version 2. |
+| `/ni/info` | GET | 200. The network the appliance is currently on: SSID, RSSI, status, MAC, IPv4/IPv6. |
+| `/ni/config` | GET with payload `[{"interfaceID": 0}]` | 200. Returns `interfaceID`, `ssid`, `automaticIPv4`, `automaticIPv6`. Never returns the password. |
+| `/ni/config` | GET without a payload | 400. |
+| `/ni/config` | POST | 200. Changes the WiFi network (see below). |
+| `/ci/wifiNetworks` | GET | 200. A WiFi scan: SSID and RSSI of every network the appliance can see. |
+| `/ci/wifiSetting` | GET | 404. The [protocol notes](https://github.com/chris-mc1/homeconnect_websocket/blob/main/doc/Home_Connect_Protocol.md) describe it under `ci` version 1 (SSID and automatic IP flags, like `/ni/config`). |
+| `/ci/networkDetails` | GET | 404. Also `ci` version 1 in the protocol notes (current IPv4/IPv6 addresses, like part of `/ni/info`). |
+| `/ci/wifiSetting2` | GET | 404. Only known by name, from the resource lists in [hcpy](https://github.com/osresearch/hcpy/blob/main/HCDevice.py) and the openHAB binding. No one has documented what it returns. |
+| `/ci/networkDetails2` | GET | 404. Same as `/ci/wifiSetting2`: a name from those lists, contents unknown. |
 
-The read-only part (every GET above, nothing written) was repeated on three Thermador appliances with the same script's `--read` mode, and all of them answered exactly like the Siemens oven:
+The four `/ci/` resources look like an older version of what `/ni/` does now, which fits every tested appliance speaking `ci` version 2 and `ni` version 1.
 
-| Appliance | Services | `/ni/config` GET | `/ci/wifiSetting*`, `/ci/networkDetails*` | `/ci/wifiNetworks` |
-| --- | --- | --- | --- | --- |
-| Siemens HB876G8B6/75 oven | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
-| Thermador PRG486WDH range | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
-| Thermador T36IF905SP freezer | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
-| Thermador DWHD660WFP dishwasher (2020) | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
-
-Two brands and three appliance types exposing the same resources the same way points at a shared platform rather than one oven's firmware. The POST wasn't tried on the Thermadors, so whether they accept it is still unconfirmed.
-
-The write that moves the appliance:
+The write:
 
 ```json
 // POST /ni/config
@@ -94,23 +103,47 @@ The write that moves the appliance:
 ]
 ```
 
-The password field is `passphrase` (`psk` is rejected with 400). The appliance answers 200, closes the WebSocket, leaves its current network and joins the new one. About 30 seconds later it was reachable on the new network with a new IP, and this integration found it again through mDNS and updated the host in the config entry by itself. Writing the current network back (same SSID and password) is a safe way to test whether an appliance accepts the write at all: it drops briefly and rejoins the same network.
+The password field is `passphrase`. `psk` is rejected with 400, and so is every other name the script tried.
 
-So unlike first-time setup, the appliance never goes into a pairing mode. It stays on its current network the whole time, receives the new network's details over the local connection, and then switches on its own.
+### Appliances tested
 
-### What this means for this idea
+moerk-o ran the whole script on the Siemens oven. The three Thermadors only got the script's `--read` mode (every GET above, no POST), and they answered exactly like the Siemens:
 
-- **It doesn't replace the hotspot step.** The write needs an already-authenticated WebSocket, so it needs the appliance's encryption key. A factory-reset appliance on its "HomeConnect" hotspot hasn't been paired to an account yet. Either the app hands over the WiFi details some other way during that step, or the appliance already has a key at that point. If it's the second, that changes a lot here: the key would come from the appliance, not from the cloud handshake. Capturing what the app sends over the hotspot answers this.
-- **It's probably what the app uses for its own network settings.** The app's "Extended network settings" refuse to work unless the phone is on the same network as the appliance ("Network change unavailable"), which fits a local-only command like this. Not confirmed, since the app's traffic hasn't been captured.
+| Appliance | Services | `/ni/info` | `/ni/config` GET | `/ci/wifiSetting` | `/ci/wifiSetting2` | `/ci/networkDetails` | `/ci/networkDetails2` | `/ci/wifiNetworks` |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Siemens HB876G8B6/75 oven (fw 2.11.6.13174) | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | 200 | 200 with payload, 400 without | 404 | 404 | 404 | 404 | 200 |
+| Thermador PRG486WDH range | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | 200 | 200 with payload, 400 without | 404 | 404 | 404 | 404 | 200 |
+| Thermador T36IF905SP freezer | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | 200 | 200 with payload, 400 without | 404 | 404 | 404 | 404 | 200 |
+| Thermador DWHD660WFP dishwasher (2020) | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | 200 | 200 with payload, 400 without | 404 | 404 | 404 | 404 | 200 |
+
+Two brands and three appliance types exposing the same resources the same way points at a shared platform rather than one oven's firmware. Whether the Thermadors accept the POST is still unconfirmed.
+
+### What this means for pairing
+
+- **A likely payload for the WiFi handoff.** A setup tool would need to hand the appliance the home network's SSID and password over the hotspot. `POST /ni/config` with `ssid` + `passphrase` is a strong guess for that message. It's only a guess until the app's hotspot traffic is captured: first-time setup might use a different resource or field names.
+- **Showing networks instead of typing them.** `/ci/wifiNetworks` returns the networks the appliance itself can see. A setup tool could offer those instead of asking for an SSID, which also rules out picking a network the appliance can't use. Only 2.4 GHz networks showed up in the tests, which fits these appliances being 2.4 GHz only (not proven by such a small scan).
+- **A wrong password during setup is a known dead end.** In [this video](https://youtu.be/hpe7zislhqQ?t=1305) (21:45-23:08), a wrong WiFi password on a refrigerator leaves the official app's setup stuck, and "you do not get to retry the password": the app's retry button tries again without asking for it, reinstalling the app doesn't help, and the only way out is resetting the appliance's network settings from its own menu. Since reinstalling the app changed nothing, the wrong password seems to be stored on the appliance, which keeps retrying it. A setup tool should make the user confirm the password before sending it, and point to the appliance's menu reset as the way back.
+- **Which key does the hotspot connection use?** Every request above needs an already-authenticated WebSocket, which needs the appliance's encryption key. A factory-reset appliance on its "HomeConnect" hotspot hasn't been registered to an account yet. Either the hotspot step uses a different channel or a default key, or the appliance already has its key before cloud registration. If it's the second, that changes a lot here: the key would come from the appliance, not from the cloud handshake. Capturing the hotspot step answers this.
+- **More resource names to watch for in a capture.** The same hcpy list also names `/ci/register`, `/ci/deregister`, `/ci/registeredDevices`, `/ci/pairableDevices`, `/ci/delregistration` and a whole `ce` group (`/ce/serverDeviceType`, `/ce/serverCredential`, `/ce/clientCredential`, `/ce/hubInformation`, `/ce/hubConnected`, `/ce/status`). By their names, these sound like registration and credential exchange, which is exactly the part of pairing this idea needs to fake. None of them has been tested or documented.
+
+<details>
+<summary>Changing the network after setup</summary>
+
+This part isn't about first-time pairing, but it's what was actually tested.
+
+- After the 200, the appliance closes the WebSocket, leaves its current network and joins the new one. It never goes into a pairing mode: it stays on its network the whole time, receives the new network's details over the local connection, and switches on its own. About 30 seconds later it was reachable on the new network with a new IP, and this integration found it again through mDNS and updated the host in the config entry by itself.
+- Writing the current network back (same SSID and password) is a safe way to test whether an appliance accepts the write at all: it drops briefly and rejoins the same network.
+- According to the protocol notes, `/ni/config` also has `manualIPv4` / `manualIPv6` blocks (address, prefix, gateway, DNS) when the automatic flags are false, so static IPs are probably set the same way. Not tested.
+- The app's "Extended network settings" refuse to work unless the phone is on the same network as the appliance ("Network change unavailable"), which fits a local-only command like this. Probably what the app uses, but its traffic hasn't been captured.
+- **Wrong password after setup: unknown.** The appliance might fall back to the network that was working, or it might be left with no network until it's reset from its menu, like the setup case above. That fridge had no earlier working network to go back to, so the video doesn't answer this.
+- **Not an integration feature.** Changing the WiFi network falls in the same category as the commands this integration deliberately leaves out (factory reset, network reset, WiFi deactivation): a mistake can leave the appliance unreachable. It's also a reminder of why the Full profile export (which contains the encryption key) stays gated: anyone with that key can move the appliance off your network over the local connection.
+
+</details>
 
 ### Open questions
 
-- **What happens with a wrong password?** Unknown. The appliance might fall back to the last network that worked, or it might be left with no network until it's fixed on the appliance or in the app. Not tested yet. The official app has the same risk during first-time setup: in [this video](https://youtu.be/hpe7zislhqQ?t=1305) (21:45-23:08) a wrong WiFi password on a refrigerator leaves setup stuck, and "you do not get to retry the password": the app's retry button tries again without asking for the password, reinstalling the app doesn't help, and the only way out is resetting the appliance's own network settings from its menu, after which setup asks for the password again. Since reinstalling the app changed nothing, the wrong password seems to be stored on the appliance itself, which it keeps retrying. That leans towards "no network until reset from the appliance's menu" for `/ni/config` too, but it isn't proof: that fridge had no earlier working network to go back to, so it doesn't show whether an appliance that's already on a working network falls back to it.
-- **Do other appliances behave the same?** For reads, yes on every appliance tried so far (see the table above), but all four are `ci` version 2 without an `iz` service, including the 2020 Thermador dishwasher. Appliances with `ci` 3 and `iz` (e.g. some newer dishwashers) may expose this differently or not at all. The script's read-only mode is the safe way to check, since it changes nothing on the appliance.
-
-### Not an integration feature
-
-Changing the WiFi network falls in the same category as the commands this integration deliberately leaves out (factory reset, network reset, WiFi deactivation): a mistake can leave the appliance unreachable. It's documented here as protocol knowledge for this project, not as something to expose in Home Assistant. It's also a reminder of why the Full profile export (which contains the encryption key) stays gated: anyone with that key can move the appliance off your network over the local connection.
+- **Appliances with `ci` 3 or an `iz` service.** Every appliance tested so far is `ci` 2 without `iz`, including the 2020 Thermador dishwasher. Newer ones (some dishwashers report `ci` 3 and `iz`) may expose this differently or not at all. The script's read-only mode is the safe way to check, since it changes nothing on the appliance.
+- **The hotspot key and the actual first-time handoff.** See "What this means for pairing". Only a capture of a real first-time setup answers these.
 
 ## How the software would work
 
