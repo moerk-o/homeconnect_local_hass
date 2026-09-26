@@ -101,6 +101,12 @@ class HCSensorEntityDescription(
     # unavailable instead, matching how the Home Connect Cloud app itself
     # handles progress once there's nothing in progress.
     unavailable_when_no_active_program: bool = False
+    # Some appliances flag an Option unavailable while still counting it: a
+    # Thermador PRG486WDH oven running a heating mode with no timer set
+    # reports ElapsedProgramTime as available=false while its value keeps
+    # going up. Shows the value anyway while a program is active (and there
+    # is a value), falling back to the appliance's own flag otherwise.
+    available_while_program_active: bool = False
 
 
 class HCBinarySensorEntityDescription(

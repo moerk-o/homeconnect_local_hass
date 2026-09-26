@@ -475,6 +475,7 @@ COMMON_ENTITY_DESCRIPTIONS: _EntityDescriptionsDefinitionsType = {
             native_unit_of_measurement=UnitOfTime.SECONDS,
             suggested_unit_of_measurement=UnitOfTime.HOURS,
             clear_on_expected_offline=True,
+            available_while_program_active=True,
         ),
         HCSensorEntityDescription(
             key="sensor_program_progress",

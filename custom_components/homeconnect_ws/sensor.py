@@ -112,6 +112,7 @@ class HCSensor(HCEntity, SensorEntity):
         if (
             entity_description.force_value_when_no_active_program is not None
             or entity_description.unavailable_when_no_active_program
+            or entity_description.available_while_program_active
         ):
             # This sensor's own backing entity (e.g. program_phase) is
             # exactly the one that stops getting fresh NOTIFYs once idle -
@@ -163,6 +164,13 @@ class HCSensor(HCEntity, SensorEntity):
             _no_active_program_and_off(self._runtime_data.appliance)
         ):
             return False
+        if (
+            self.entity_description.available_while_program_active
+            and self._runtime_data.appliance.active_program is not None
+            and self._entity is not None
+            and self._entity.value is not None
+        ):
+            return self._runtime_data.appliance.session.connected
         return super().available
 
 
