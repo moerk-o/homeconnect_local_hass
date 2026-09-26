@@ -54,7 +54,7 @@ For some reason a Home Connect Appliance can be registered to multiple accounts.
 ## Potential network commands
 
 >[!important]
-> Only confirmed on one appliance so far. Treat everything here as a lead, not as documented behavior.
+> The WiFi change (the POST) is only confirmed on one appliance so far, and the reads on four. Treat everything here as a lead, not as documented behavior.
 
 [@moerk-o](https://github.com/moerk-o) found that an already-paired appliance can be moved to a different WiFi network over its local WebSocket, with no hotspot, no network reset and no Home Connect app ([discussion #105](https://github.com/vemboy200/homeconnect_local_hass/discussions/105), [script](https://gist.github.com/moerk-o/5f3835fffee3ef1ad1e113676ef9bf73)). Tested on a Siemens HB876G8B6/75 oven, firmware 2.11.6.13174, AES connection (`ws://`, port 80), services `ro` 1, `ei` 2, `ci` 2, `ni` 1.
 
@@ -67,6 +67,17 @@ All of these go over the existing, authenticated WebSocket, after the handshake:
 | `/ni/info` | GET | Shows the network the appliance is currently on. |
 | `/ci/wifiNetworks` | GET | Returns a WiFi scan (SSID and RSSI per network). |
 | `/ci/wifiSetting`, `/ci/wifiSetting2`, `/ci/networkDetails`, `/ci/networkDetails2` | GET | 404 on this appliance. The protocol notes describe them for `ci` version 1, and this oven speaks version 2. |
+
+The read-only part (every GET above, nothing written) was repeated on three Thermador appliances with the same script's `--read` mode, and all of them answered exactly like the Siemens oven:
+
+| Appliance | Services | `/ni/config` GET | `/ci/wifiSetting*`, `/ci/networkDetails*` | `/ci/wifiNetworks` |
+| --- | --- | --- | --- | --- |
+| Siemens HB876G8B6/75 oven | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
+| Thermador PRG486WDH range | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
+| Thermador T36IF905SP freezer | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
+| Thermador DWHD660WFP dishwasher (2020) | `ro` 1, `ei` 2, `ci` 2, `ni` 1 | OK with payload, 400 without | 404 | OK |
+
+Two brands and three appliance types exposing the same resources the same way points at a shared platform rather than one oven's firmware. The POST wasn't tried on the Thermadors, so whether they accept it is still unconfirmed.
 
 The write that moves the appliance:
 
@@ -95,7 +106,7 @@ So unlike first-time setup, the appliance never goes into a pairing mode. It sta
 ### Open questions
 
 - **What happens with a wrong password?** Unknown. The appliance might fall back to the last network that worked, or it might be left with no network until it's fixed on the appliance or in the app. Not tested yet. The official app has the same risk during first-time setup: in [this video](https://youtu.be/hpe7zislhqQ?t=1305) (21:45-23:08) a wrong WiFi password on a refrigerator leaves setup stuck, and "you do not get to retry the password": the app's retry button tries again without asking for the password, reinstalling the app doesn't help, and the only way out is resetting the appliance's own network settings from its menu, after which setup asks for the password again. Since reinstalling the app changed nothing, the wrong password seems to be stored on the appliance itself, which it keeps retrying. That leans towards "no network until reset from the appliance's menu" for `/ni/config` too, but it isn't proof: that fridge had no earlier working network to go back to, so it doesn't show whether an appliance that's already on a working network falls back to it.
-- **Do other appliances behave the same?** One appliance, one firmware, `ci` version 2 without an `iz` service. Appliances with `ci` 3 and `iz` (e.g. some dishwashers) may expose this differently or not at all. The script's read-only mode is the safe way to check, since it changes nothing on the appliance.
+- **Do other appliances behave the same?** For reads, yes on every appliance tried so far (see the table above), but all four are `ci` version 2 without an `iz` service, including the 2020 Thermador dishwasher. Appliances with `ci` 3 and `iz` (e.g. some newer dishwashers) may expose this differently or not at all. The script's read-only mode is the safe way to check, since it changes nothing on the appliance.
 
 ### Not an integration feature
 
