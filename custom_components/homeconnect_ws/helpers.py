@@ -165,7 +165,7 @@ def needs_full_option_set(program: Program) -> bool:
     return program.full_option_set
 
 
-def selected_program_needs_full_option_set(entity: HcEntity | None) -> bool:
+def selected_program_needs_full_option_set(entity: SelectedProgram) -> bool:
     """
     Whether a write to SelectedProgram itself has to carry the complete option set.
 
@@ -179,7 +179,7 @@ def selected_program_needs_full_option_set(entity: HcEntity | None) -> bool:
     the appliance-wide value says otherwise. Ask the entity being written to,
     not the appliance.
     """
-    return bool(getattr(entity, "full_option_set", False))
+    return entity.full_option_set
 
 
 def is_unplugged_probe(appliance: HomeAppliance, option: Option) -> bool:

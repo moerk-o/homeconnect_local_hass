@@ -488,7 +488,7 @@ async def test_full_option_set_program_sends_complete_options(
     await mock_appliance.entities["Test.Option1"].update({"value": 1})
     assert await setup_config_entry(hass, MOCK_CONFIG_DATA)
 
-    with patch.object(SelectedProgram, "full_option_set", new=True, create=True):
+    with patch.object(SelectedProgram, "full_option_set", new=True):
         await hass.services.async_call(
             SELECT_DOMAIN,
             SERVICE_SELECT_OPTION,
@@ -568,7 +568,7 @@ async def test_full_option_set_select_only_program_stays_on_selected_program(
     )
     assert await setup_config_entry(hass, MOCK_CONFIG_DATA)
 
-    with patch.object(SelectedProgram, "full_option_set", new=True, create=True):
+    with patch.object(SelectedProgram, "full_option_set", new=True):
         await hass.services.async_call(
             SELECT_DOMAIN,
             SERVICE_SELECT_OPTION,
